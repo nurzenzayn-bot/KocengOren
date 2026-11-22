@@ -204,8 +204,8 @@ class GeminiClient(
 
     /** Tutup client */
     fun close() {
-        okHttpClient.dispatcher().executorService.shutdown()
-        okHttpClient.connectionPool().evictAll()
+        okHttpClient.dispatcher.executorService.shutdown()
+        okHttpClient.connectionPool.evictAll()
     }
 
     // ===== Data Classes untuk Request/Response =====
