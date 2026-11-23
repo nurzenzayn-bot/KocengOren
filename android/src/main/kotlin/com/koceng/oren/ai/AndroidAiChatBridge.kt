@@ -36,6 +36,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import com.badlogic.gdx.Gdx
 import com.koceng.oren.BuildConfig
+import com.koceng.oren.notifications.ProactiveNotificationScheduler
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -1148,7 +1149,9 @@ dialogRef = showCustomDialog(card)
                 "Atur Nama Panggilan",
                 "Ganti Suara Gemini",
                 "Atur Level Ketus",
-                "Ganti Tema Ruangan"
+                "Ganti Tema Ruangan",
+                "Notifikasi Proaktif",
+                "Tes Notifikasi Proaktif"
             )
             showCartoonOptionListDialog("Pengaturan Koceng Oren", items) { which ->
                 when (which) {
@@ -1157,6 +1160,8 @@ dialogRef = showCustomDialog(card)
                     2 -> showVoicePickerDialog()
                     3 -> showAttitudePickerDialog()
                     4 -> showRoomThemePickerDialog()
+                    5 -> showProactiveToggleDialog()
+                    6 -> sendTestProactiveNotification()
                 }
             }
         }
@@ -1305,5 +1310,39 @@ prefs.edit().putString("room_theme", chosenTheme.name).apply()
 Gdx.app?.postRunnable { onRoomThemeChanged?.invoke(chosenTheme) }
 Toast.makeText(activity, "Tema: ${themeLabels[idx]}", Toast.LENGTH_SHORT).show()
 }
+}
+
+private fun showProactiveToggleDialog() {
+val enabled = ProactiveNotificationScheduler.isEnabled(activity)
+val options = arrayOf("Aktifkan", "Matikan")
+val checked = if (enabled) 0 else 1
+showCartoonOptionListDialog("Notifikasi Proaktif", options, checked) { idx ->
+val turnOn = idx == 0
+ProactiveNotificationScheduler.setEnabled(activity, turnOn)
+val message = if (turnOn) {
+"Notifikasi proaktif aktif. Oren bakal nyapa kalau lu lama nggak buka."
+} else {
+"Notifikasi proaktif dimatikan."
+}
+Toast.makeText(activity, message, Toast.LENGTH_SHORT).show()
+}
+}
+
+private fun sendTestProactiveNotification() {
+val facts = synchronized(memoryLock) { conversationMemory.getKeyFacts() }
+val name = userName.ifBlank { facts["nama"] ?: "" }
+val message = ProactiveMessageGenerator.build(
+trigger = ProactiveTrigger.MorningGreeting,
+userName = name,
+keyFacts = facts,
+persona = personaManager.getCurrentPersona()
+)
+val shown = ProactiveNotificationScheduler.showNotification(activity, message.title, message.body)
+val toast = if (shown) {
+"Notifikasi tes dikirim!"
+} else {
+"Izin notifikasi belum aktif. Aktifkan izin notifikasi di pengaturan HP dulu ya."
+}
+Toast.makeText(activity, toast, Toast.LENGTH_SHORT).show()
 }
 }

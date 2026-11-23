@@ -53,6 +53,7 @@ android/
     - ai/AndroidAiChatBridge.kt  (STT + Gemini + TTS + homework + HUD native)
     - ai/NativePetHudOverlay.kt (HUD bubble/komik di Android)
     - audio/AndroidVoiceMimicBridge.kt (VAD AudioRecord)
+    - notifications/            (sapaan proaktif: alarm, receiver, notifikasi)
 
 assets/
   models/cartoon_cat.glb        (avatar 3D)
@@ -77,8 +78,8 @@ Persona bawaan (Default, Casual, Sarkas, Formal, Ramah, Gen-Z) didefinisikan di
 - [x] Core AI abstraction (Persona, Memory, Prompt, Gemini, Homework)
 - [x] Android integration (STT/TTS/Gemini/homework/HUD native)
 - [x] Memory & personalisasi (memori persisten, fakta user, ringkasan, pilih persona, nama panggilan)
+- [x] Proactive notifications (sapaan pagi/malam, kangen, follow-up PR)
 - [ ] Custom voice cloning
-- [ ] Proactive notifications
 - [ ] Play Store beta
 
 ---

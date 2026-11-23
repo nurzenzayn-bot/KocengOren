@@ -192,6 +192,12 @@ class ConversationMemory(
         return history.takeLast(count.coerceAtMost(history.size))
     }
 
+    /** Turn terakhir, dipakai untuk proactive notification (mode & topik terakhir). */
+    fun getLastTurn(): ChatTurn? = history.lastOrNull()
+
+    /** Timestamp aktivitas terakhir user (0 kalau belum pernah ngobrol). */
+    fun getLastActiveTimestamp(): Long = history.lastOrNull()?.timestamp ?: 0L
+
     /** Get semua history (untuk export/debug) */
     fun getAllHistory(): List<ChatTurn> = history.toList()
 

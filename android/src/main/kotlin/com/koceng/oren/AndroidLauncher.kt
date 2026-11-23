@@ -1,5 +1,8 @@
 package com.koceng.oren
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.content.Intent
 import android.widget.FrameLayout
@@ -7,8 +10,13 @@ import com.badlogic.gdx.backends.android.AndroidApplication
 import com.badlogic.gdx.backends.android.AndroidApplicationConfiguration
 import com.koceng.oren.ai.AndroidAiChatBridge
 import com.koceng.oren.audio.AndroidVoiceMimicBridge
+import com.koceng.oren.notifications.ProactiveNotificationScheduler
 
 class AndroidLauncher : AndroidApplication() {
+
+    private companion object {
+        private const val REQ_POST_NOTIFICATIONS = 9101
+    }
 
     private lateinit var voiceBridge: AndroidVoiceMimicBridge
     private lateinit var aiChatBridge: AndroidAiChatBridge
@@ -51,6 +59,18 @@ class AndroidLauncher : AndroidApplication() {
             )
         }
         setContentView(rootLayout)
+
+        setupProactiveNotifications()
+    }
+
+    private fun setupProactiveNotifications() {
+        ProactiveNotificationScheduler.ensureChannel(this)
+        ProactiveNotificationScheduler.schedule(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_POST_NOTIFICATIONS)
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
