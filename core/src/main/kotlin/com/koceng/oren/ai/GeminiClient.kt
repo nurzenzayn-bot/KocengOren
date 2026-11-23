@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -223,14 +224,14 @@ class GeminiClient(
         val contents: List<Content>,
         val generationConfig: GenerationConfig,
         val safetySettings: List<SafetySetting>
-    ) {
-        data class GenerationConfig(
-            val temperature: Float,
-            val topP: Float,
-            val topK: Int,
-            val maxOutputTokens: Int
-        )
-    }
+    )
+
+    data class GenerationConfig(
+        val temperature: Float,
+        val topP: Float,
+        val topK: Int,
+        val maxOutputTokens: Int
+    )
 
     data class SafetySetting(
         val category: String,
@@ -289,19 +290,18 @@ class GeminiClient(
 
         fun isSuccess(): Boolean = this is Success
         fun isFailure(): Boolean = this is Failure
-        fun getOrNull(): T? = if (this is Success) value else null
-        fun getOrThrow(): T = if (this is Success) value else throw exception
+        fun getOrNull(): T? = when (this) {
+            is Success -> value
+            is Failure -> null
+        }
+        fun getOrThrow(): T = when (this) {
+            is Success -> value
+            is Failure -> throw exception
+        }
     }
 }
 
 /** Suspend extension untuk OkHttp Call -> Response */
-suspend fun okhttp3.Call.awaitResponse(): okhttp3.Response = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-    enqueue(object : okhttp3.Callback {
-        override fun onFailure(call: okhttp3.Call, e: IOException) {
-            cont.resumeWithException(e)
-        }
-        override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-            cont.resume(response)
-        }
-    })
+suspend fun okhttp3.Call.awaitResponse(): okhttp3.Response = withContext(Dispatchers.IO) {
+    execute().use { it }
 }

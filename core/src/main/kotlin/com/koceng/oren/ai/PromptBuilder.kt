@@ -47,7 +47,7 @@ class PromptBuilder(
     /** Build prompt untuk homework (text-based) */
     fun buildHomeworkPrompt(
         userInput: String,
-        problemType: HomeworkPipeline.ProblemType = HomeworkPipeline.ProblemType.GENERAL,
+        problemType: ProblemType = ProblemType.GENERAL,
         personaId: String = "default"
     ): PromptBundle {
         val systemPrompt = personaManager.buildSystemPrompt(
@@ -101,7 +101,7 @@ class PromptBuilder(
     /** Build prompt untuk homework dari OCR result */
     fun buildOcrHomeworkPrompt(
         ocrText: String,
-        problemType: HomeworkPipeline.ProblemType,
+        problemType: ProblemType,
         personaId: String = "default"
     ): PromptBundle {
         val systemPrompt = personaManager.buildSystemPrompt(
@@ -155,7 +155,7 @@ class PromptBuilder(
         val triggerPrompt = when (trigger) {
             is ProactiveTrigger.HomeworkFollowUp -> """
                 User tadi nanya PR ${trigger.subject}. 
-                Kirim pesan singkat tanya progress: "Eh, PR $subject tadi udah selesai nggak? Butuh bantuan lagi nggak?"
+                Kirim pesan singkat tanya progress: "Eh, PR ${trigger.subject} tadi udah selesai nggak? Butuh bantuan lagi nggak?"
             """.trimIndent()
             is ProactiveTrigger.LongSilence -> """
                 User diam ${trigger.hours} jam. 

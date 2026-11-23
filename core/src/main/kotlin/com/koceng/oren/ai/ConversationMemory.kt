@@ -139,7 +139,7 @@ class ConversationMemory(
     private fun generateSummary() {
         if (history.isEmpty()) return
 
-        val recent = history.takeLast(summaryInterval.minOf(history.size))
+        val recent = history.takeLast(history.size.coerceAtMost(summaryInterval))
         val topics = recent.flatMap { turn ->
             (turn.user + " " + turn.assistant).lowercase().split(" ")
                 .filter { it.length > 4 }
@@ -163,7 +163,7 @@ class ConversationMemory(
 
     /** Get recent N turns untuk context window */
     fun getRecentTurns(count: Int = 10): List<ChatTurn> {
-        return history.takeLast(count.minOf(history.size))
+        return history.takeLast(count.coerceAtMost(history.size))
     }
 
     /** Get semua history (untuk export/debug) */
@@ -228,8 +228,9 @@ class ConversationMemory(
     companion object {
         fun fromJson(json: String): ConversationMemory {
             val gson = Gson()
-            val type: Type = object : TypeToken<MemoryData>() {}.type
-            val data = gson.fromJson(json, type)
+            val typeToken = object : TypeToken<MemoryData>() {}
+            val type: Type = typeToken.type
+            val data: MemoryData = gson.fromJson(json, type)
             val memory = ConversationMemory()
             memory.history.addAll(data.history)
             memory.keyFacts.putAll(data.keyFacts)

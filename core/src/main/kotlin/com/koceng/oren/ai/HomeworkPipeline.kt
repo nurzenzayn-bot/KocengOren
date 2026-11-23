@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 
 /**
  * Pipeline untuk memproses homework dari foto:
@@ -84,6 +85,7 @@ class HomeworkPipeline(
             ProblemType.PHYSICS -> "Tulis diketahui & ditanya. Pilih rumus fisika yang tepat."
             ProblemType.ENGLISH -> "Jelaskan grammar/tenses. Berikan terjemahan & alasan."
             ProblemType.GENERAL -> "Analisis soal secara umum. Pecah jadi sub-masalah."
+            else -> "Analisis soal secara umum. Pecah jadi sub-masalah."
         }
 
         return """

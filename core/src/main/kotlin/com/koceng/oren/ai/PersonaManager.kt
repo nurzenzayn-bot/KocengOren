@@ -12,20 +12,20 @@ class PersonaManager {
 
     private val gson = Gson()
     private var currentConfig: PersonaConfig = PersonaConfig.default()
-    private var availablePersonas: Map<String, PersonaConfig> = mapOf()
+    private var availablePersonas: MutableMap<String, PersonaConfig> = mutableMapOf()
 
     init {
         loadBuiltInPersonas()
     }
 
     /**
-     * Memuat persona built-in dari assets/personas/*.json
+     * Memuat persona built-in dari folder assets/personas (format JSON).
      * Fallback ke default hardcoded kalau gagal.
      */
     private fun loadBuiltInPersonas() {
         // Persona default hardcoded sebagai fallback
         val defaultPersona = PersonaConfig.default()
-        availablePersonas = mapOf(
+        availablePersonas = mutableMapOf(
             "default" to defaultPersona,
             "casual" to PersonaConfig.casualJakarta(),
             "sarkas" to PersonaConfig.sarkas(),
