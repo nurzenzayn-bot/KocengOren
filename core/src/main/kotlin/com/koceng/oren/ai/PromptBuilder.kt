@@ -1,7 +1,7 @@
 package com.koceng.oren.ai
 
 /**
- * Builder untuk构建 prompt yang dikirim ke LLM.
+ * Builder untuk membangun prompt yang dikirim ke LLM.
  * Menggabungkan system prompt + conversation memory + current input.
  * Dipisah agar testable & reusable.
  */

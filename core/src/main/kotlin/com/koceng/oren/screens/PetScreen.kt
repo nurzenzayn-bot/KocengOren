@@ -169,7 +169,7 @@ class PetScreen(
 
         aiChatBridge.setChatMode(ChatMode.CHAT)
         setupAiChatCallbacks()
-        aiChatBridge.speakText("Apaan sih manggil-manggil? Mau ngobrol atau nyuruh gue ngerjain PR lu lagi?")
+        aiChatBridge.speakText(aiChatBridge.getPersonalizedGreeting())
         applyRoomTheme(aiChatBridge.getSavedRoomTheme())
     }
 

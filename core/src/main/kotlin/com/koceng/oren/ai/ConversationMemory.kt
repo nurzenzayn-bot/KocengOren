@@ -67,55 +67,45 @@ class ConversationMemory(
     private fun extractKeyFacts(userMessage: String, turn: ChatTurn) {
         val lower = userMessage.lowercase()
 
-        // Pattern: "nama gue [nama]" / "namaku [nama]" / "aku [nama]"
+        // Pattern nama harus eksplisit supaya tidak salah tangkap kalimat biasa
+        // (mis. "aku mau makan" jangan sampai tersimpan sebagai nama "Mau").
         val namePatterns = listOf(
             "nama gue ", "namaku ", "nama aku ", "panggil aku ", "panggil gue ",
-            "aku ", "gue " // hati-hati dengan false positive
+            "nama saya ", "panggil saya "
         )
         for (pattern in namePatterns) {
-            val idx = lower.indexOf(pattern)
-            if (idx >= 0) {
-                val start = idx + pattern.length
-                val end = lower.indexOfFirst { it in " ,.!?\n" }.takeIf { it >= start } ?: lower.length
-                val potentialName = userMessage.substring(start, end).trim()
-                if (potentialName.length >= 2 && potentialName.length <= 20 && potentialName.all { it.isLetter() || it.isWhitespace() }) {
-                    keyFacts["nama"] = potentialName.capitalize()
-                    trimKeyFacts()
-                    return
-                }
+            val potentialName = extractValueAfterPattern(userMessage, lower, pattern, maxLength = 20) ?: continue
+            if (potentialName.all { it.isLetter() || it.isWhitespace() }) {
+                keyFacts["nama"] = potentialName.replaceFirstChar { it.uppercase() }
+                trimKeyFacts()
+                break
             }
+        }
+
+        // Pattern: "benci [hal]" / "nggak suka [hal]" — dicek dulu supaya
+        // "nggak suka durian" tidak ikut tersimpan sebagai fakta "suka".
+        val dislikePatterns = listOf("benci ", "nggak suka ", "ga suka ", "gak suka ", "tidak suka ")
+        for (pattern in dislikePatterns) {
+            val dislike = extractValueAfterPattern(userMessage, lower, pattern, maxLength = 30) ?: continue
+            keyFacts["benci"] = dislike
+            trimKeyFacts()
+            break
         }
 
         // Pattern: "suka [hal]" / "hobi [hal]" / "minat [hal]"
         val interestPatterns = listOf("suka ", "hobi ", "minat ", "gemar ", "enak ")
         for (pattern in interestPatterns) {
             val idx = lower.indexOf(pattern)
-            if (idx >= 0) {
-                val start = idx + pattern.length
-                val end = lower.indexOfFirst { it in " ,.!?\n" }.takeIf { it >= start } ?: lower.length
-                val interest = userMessage.substring(start, end).trim()
-                if (interest.length >= 2 && interest.length <= 30) {
-                    keyFacts["suka"] = interest
-                    trimKeyFacts()
-                    return
-                }
-            }
-        }
+            if (idx < 0) continue
+            val prefix = lower.substring(0, idx).trimEnd()
+            val negated = prefix.endsWith("nggak") || prefix.endsWith("gak") ||
+                prefix.endsWith("ga") || prefix.endsWith("tidak")
+            if (negated) continue
 
-        // Pattern: "benci [hal]" / "nggak suka [hal]"
-        val dislikePatterns = listOf("benci ", "nggak suka ", "ga suka ", "tidak suka ")
-        for (pattern in dislikePatterns) {
-            val idx = lower.indexOf(pattern)
-            if (idx >= 0) {
-                val start = idx + pattern.length
-                val end = lower.indexOfFirst { it in " ,.!?\n" }.takeIf { it >= start } ?: lower.length
-                val dislike = userMessage.substring(start, end).trim()
-                if (dislike.length >= 2 && dislike.length <= 30) {
-                    keyFacts["benci"] = dislike
-                    trimKeyFacts()
-                    return
-                }
-            }
+            val interest = extractValueAfterPattern(userMessage, lower, pattern, maxLength = 30) ?: continue
+            keyFacts["suka"] = interest
+            trimKeyFacts()
+            break
         }
 
         // Deteksi topik teknis: "PR matematika", "soal fisika", "bahasa inggris", dll
@@ -128,6 +118,42 @@ class ConversationMemory(
             }
         }
     }
+
+    /**
+     * Ambil potongan teks setelah [pattern] sampai pemisah kata terdekat.
+     * Pencarian pemisah dimulai dari akhir pattern (bukan dari awal kalimat)
+     * supaya tidak salah mengambil seluruh sisa pesan.
+     */
+    private fun extractValueAfterPattern(
+        message: String,
+        lower: String,
+        pattern: String,
+        maxLength: Int
+    ): String? {
+        val idx = lower.indexOf(pattern)
+        if (idx < 0) return null
+        val start = idx + pattern.length
+        if (start >= message.length) return null
+
+        var end = start
+        while (end < message.length && message[end] !in " ,.!?\n") end++
+
+        val value = message.substring(start, end).trim()
+        return value.takeIf { it.length in 2..maxLength }
+    }
+
+    /** Simpan satu fakta user secara manual (mis. nama dari dialog pengaturan). */
+    fun setKeyFact(key: String, value: String) {
+        if (value.isBlank()) {
+            keyFacts.remove(key)
+        } else {
+            keyFacts[key] = value.trim()
+        }
+        trimKeyFacts()
+    }
+
+    /** Total turn percakapan yang pernah tercatat (termasuk setelah restore). */
+    fun getTurnCount(): Int = turnCount
 
     private fun trimKeyFacts() {
         while (keyFacts.size > maxKeyFacts) {
@@ -181,14 +207,16 @@ class ConversationMemory(
         val facts = keyFacts.map { "${it.key}: ${it.value}" }.joinToString(", ")
         val historyStr = recent.joinToString("\n\n") { it.toShortString() }
 
-        return """
-            ===== MEMORI PERCAKAPAN =====
-            Fakta User: ${if (facts.isEmpty()) "Belum ada" else facts}
-            Ringkasan: ${if (lastSummary.isBlank()) "Belum ada" else lastSummary}
-            
-            Riwayat Terbaru (${recent.size} turn):
-            $historyStr
-        """.trimIndent()
+        return buildString {
+            appendLine("===== MEMORI PERCAKAPAN =====")
+            appendLine("Fakta User: ${if (facts.isEmpty()) "Belum ada" else facts}")
+            appendLine("Ringkasan: ${if (lastSummary.isBlank()) "Belum ada" else lastSummary}")
+            if (recent.isNotEmpty()) {
+                appendLine()
+                appendLine("Riwayat Terbaru (${recent.size} turn):")
+                append(historyStr)
+            }
+        }.trimEnd()
     }
 
     /** Build UserContext object untuk PersonaManager */

@@ -32,6 +32,8 @@ interface AiChatBridge {
     fun copyLastReplyToClipboard()
     fun openChatHistoryDialog()
     fun openSettingsDialog()
+    /** Sapaan awal yang sudah dipersonalisasi dari memori & persona aktif. */
+    fun getPersonalizedGreeting(): String
     fun getSavedRoomTheme(): RoomTheme
     val useNativeHud: Boolean
     fun updateNativeBubble(userText: String?, replyText: String)

@@ -81,6 +81,13 @@ private const val PREFS_NAME = "koceng_oren_prefs"
     @Volatile private var attitudeLevel: Int = prefs.getInt("attitude_level", 1)
     @Volatile private var lastReplyText: String = ""
 
+    // ===== Phase 3: memori jangka panjang & personalisasi =====
+    private val personaManager = PersonaManager()
+    private var conversationMemory: ConversationMemory = loadPersistedMemory()
+    @Volatile private var selectedPersonaId: String = prefs.getString("persona_id", "default") ?: "default"
+    @Volatile private var userName: String = prefs.getString("user_name", "") ?: ""
+    private val memoryLock = Any()
+
     private var speechRecognizer: SpeechRecognizer? = null
     private var fallbackTts: TextToSpeech? = null
     private var isFallbackTtsReady = false
@@ -100,6 +107,11 @@ private const val PREFS_NAME = "koceng_oren_prefs"
     private val chatHistory = mutableListOf<Pair<String, String>>()
 
     init {
+        // Phase 3: pulihkan persona, nama panggilan, dan memori obrolan terakhir.
+        personaManager.setPersona(selectedPersonaId)
+        if (userName.isNotBlank()) conversationMemory.setKeyFact("nama", userName)
+        restoreChatHistoryFromMemory()
+
         activity.runOnUiThread {
             fallbackTts = TextToSpeech(activity.applicationContext) { status ->
                 if (status == TextToSpeech.SUCCESS) {
@@ -145,6 +157,61 @@ private const val PREFS_NAME = "koceng_oren_prefs"
         synchronized(chatHistory) {
             chatHistory.clear()
         }
+        synchronized(memoryLock) {
+            conversationMemory.clear()
+            if (userName.isNotBlank()) conversationMemory.setKeyFact("nama", userName)
+            persistMemory()
+        }
+    }
+
+    // ===== Phase 3: persistensi memori =====
+
+    private fun loadPersistedMemory(): ConversationMemory {
+        val json = prefs.getString("conversation_memory", null)
+        if (json.isNullOrBlank()) return ConversationMemory()
+        return try {
+            ConversationMemory.fromJson(json)
+        } catch (e: Exception) {
+            ConversationMemory()
+        }
+    }
+
+    private fun persistMemory() {
+        try {
+            synchronized(memoryLock) {
+                prefs.edit().putString("conversation_memory", conversationMemory.toJson()).apply()
+            }
+        } catch (e: Exception) {
+            // Persistensi gagal tidak boleh menghentikan percakapan.
+        }
+    }
+
+    /** Pulihkan beberapa turn terakhir ke context window Gemini setelah app dibuka ulang. */
+    private fun restoreChatHistoryFromMemory() {
+        synchronized(chatHistory) {
+            chatHistory.clear()
+            synchronized(memoryLock) {
+                conversationMemory.getRecentTurns(3).forEach { turn ->
+                    chatHistory.add("user" to turn.user)
+                    chatHistory.add("model" to turn.assistant)
+                }
+            }
+        }
+    }
+
+    /** Catat satu pertukaran ke short-term history (API) dan long-term memory (persisten). */
+    private fun recordConversationTurn(userText: String, replyText: String, mode: ChatMode) {
+        synchronized(chatHistory) {
+            chatHistory.add("user" to userText)
+            chatHistory.add("model" to replyText)
+            while (chatHistory.size > MAX_HISTORY_TURNS) {
+                chatHistory.removeAt(0)
+            }
+        }
+        synchronized(memoryLock) {
+            conversationMemory.addTurn(userText, replyText, mode, selectedPersonaId)
+        }
+        persistMemory()
     }
 
     override fun startListening() {
@@ -430,10 +497,33 @@ dialogRef = showCustomDialog(card)
             2 -> "Level ketus: super bar-bar, sarkastik, galak maksimal ala koceng oren!"
             else -> "Level ketus: ketus, blak-blakan, nyolot standar."
         }
+
+        // Phase 3: persona aktif + memori tentang user ikut masuk ke system instruction.
+        val personaBlock = personaManager.getCurrentPersona().buildTonePrompt()
+        val userContext = synchronized(memoryLock) {
+            conversationMemory.buildUserContext(selectedPersonaId)
+        }
+        val hasMemory = !userContext.name.isNullOrBlank() ||
+            userContext.keyFacts.isNotEmpty() ||
+            userContext.recentSummary.isNotBlank() ||
+            userContext.totalConversations > 0
+
+        val personalization = buildString {
+            appendLine()
+            appendLine(personaBlock)
+            if (hasMemory) {
+                appendLine()
+                appendLine("===== MEMORI TENTANG USER =====")
+                appendLine(userContext.buildContextString())
+                appendLine("Gunakan memori ini secara natural: panggil nama user kalau ada, sambungkan topik lama, jangan mengulang fakta seperti robot.")
+            }
+        }
+
         return if (mode == ChatMode.HOMEWORK) {
             """
             $basePersona
             $attitudeRule
+            $personalization
 
             MODE KHUSUS: PR SEKOLAH AKTIF.
             - Awali dengan satu kalimat sindiran ketus singkat (misal: "Elah, soal gampang gini aja nanya kucing, ya udah nih simak!").
@@ -445,6 +535,7 @@ dialogRef = showCustomDialog(card)
             """
             $basePersona
             $attitudeRule
+            $personalization
 
             MODE: OBROLAN SANTAI.
             - Jawab santai seperti manusia ngobrol langsung, singkat dan padat (2-4 kalimat) agar respons suara cepat dan natural.
@@ -469,13 +560,7 @@ dialogRef = showCustomDialog(card)
             try {
                 val replyText = callGeminiChatApi(apiKey, userText, currentMode)
 
-                synchronized(chatHistory) {
-                    chatHistory.add("user" to userText)
-                    chatHistory.add("model" to replyText)
-                    while (chatHistory.size > MAX_HISTORY_TURNS) {
-                        chatHistory.removeAt(0)
-                    }
-                }
+                recordConversationTurn(userText, replyText, currentMode)
 
                 isThinking.set(false)
                 notifyThinking(false)
@@ -949,13 +1034,7 @@ private fun playAudioFile(audioFile: File) {
                     notifyError("Gemini tidak memberikan jawaban untuk foto PR.")
                     return@Thread
                 }
-                synchronized(chatHistory) {
-                    chatHistory.add("user" to "[Foto Soal PR]")
-                    chatHistory.add("model" to replyText)
-                    while (chatHistory.size > MAX_HISTORY_TURNS) {
-                        chatHistory.removeAt(0)
-                    }
-                }
+                recordConversationTurn("[Foto Soal PR]", replyText, ChatMode.HOMEWORK)
                 notifyReply(replyText)
                 val spokenText = prepareSpokenText(replyText)
                 val playedWithGemini = speakWithGeminiNaturalVoice(apiKey, spokenText)
@@ -986,7 +1065,20 @@ private fun playAudioFile(audioFile: File) {
 
     override fun openChatHistoryDialog() {
         activity.runOnUiThread {
-            val historyText = synchronized(chatHistory) {
+            val ctx = synchronized(memoryLock) {
+                conversationMemory.buildUserContext(selectedPersonaId)
+            }
+            val memoryHeader = buildString {
+                appendLine("Persona: ${personaLabel(selectedPersonaId)}")
+                if (userName.isNotBlank()) appendLine("Nama kamu: $userName")
+                if (ctx.keyFacts.isNotEmpty()) {
+                    appendLine("Fakta diingat: ${ctx.keyFacts.entries.joinToString(", ") { "${it.key}=${it.value}" }}")
+                }
+                if (ctx.recentSummary.isNotBlank()) appendLine("Ringkasan: ${ctx.recentSummary}")
+                if (ctx.totalConversations > 0) appendLine("Total obrolan: ${ctx.totalConversations} turn")
+                appendLine()
+            }
+            val historyText = memoryHeader + synchronized(chatHistory) {
                 if (chatHistory.isEmpty()) {
                     "Belum ada riwayat obrolan."
                 } else {
@@ -1047,20 +1139,135 @@ btnRow.addView(closeBtn)
 content.addView(btnRow)
 dialogRef = showCustomDialog(card)
         }
-    }    override fun openSettingsDialog() {
-activity.runOnUiThread {
-val items = arrayOf("Ganti Suara Gemini", "Atur Level Ketus", "Ganti Tema Ruangan")
-showCartoonOptionListDialog("Pengaturan Koceng Oren", items) { which ->
-when (which) {
-0 -> showVoicePickerDialog()
-1 -> showAttitudePickerDialog()
-2 -> showRoomThemePickerDialog()
-}
-}
-}
-}
+    }
 
-private fun showVoicePickerDialog() {
+    override fun openSettingsDialog() {
+        activity.runOnUiThread {
+            val items = arrayOf(
+                "Ganti Persona",
+                "Atur Nama Panggilan",
+                "Ganti Suara Gemini",
+                "Atur Level Ketus",
+                "Ganti Tema Ruangan"
+            )
+            showCartoonOptionListDialog("Pengaturan Koceng Oren", items) { which ->
+                when (which) {
+                    0 -> showPersonaPickerDialog()
+                    1 -> showUserNameDialog()
+                    2 -> showVoicePickerDialog()
+                    3 -> showAttitudePickerDialog()
+                    4 -> showRoomThemePickerDialog()
+                }
+            }
+        }
+    }
+
+    override fun getPersonalizedGreeting(): String {
+        val ctx = synchronized(memoryLock) {
+            conversationMemory.buildUserContext(selectedPersonaId)
+        }
+        val name = userName.ifBlank { ctx.name ?: "" }
+        val templates = personaManager.getCurrentPersona().greetingTemplates
+        val base = templates.randomOrNull() ?: "Yo, ada apa?"
+        return when {
+            name.isNotBlank() && ctx.totalConversations > 0 -> "Eh $name! Balik lagi ya. $base"
+            name.isNotBlank() -> "Eh $name! $base"
+            ctx.totalConversations > 0 -> "Eh, lu balik lagi ya. $base"
+            else -> base
+        }
+    }
+
+    private fun personaLabel(id: String): String = when (id) {
+        "default" -> "Oren Default (Sarkas Ringan)"
+        "casual" -> "Santai Jakarta (Gue/Lu)"
+        "sarkas" -> "Sarkas Tajam"
+        "formal" -> "Formal Sopan"
+        "ramah" -> "Ramah & Supportif"
+        "genz" -> "Gen-Z Slang"
+        else -> personaManager.getPersona(id)?.name ?: id
+    }
+
+    private fun showPersonaPickerDialog() {
+        val ids = personaManager.getAvailablePersonaIds()
+        if (ids.isEmpty()) return
+        val labels = ids.map { personaLabel(it) }.toTypedArray()
+        val checked = ids.indexOf(selectedPersonaId).coerceAtLeast(0)
+        showCartoonOptionListDialog("Pilih Persona Oren", labels, checked) { idx ->
+            val chosen = ids[idx]
+            selectedPersonaId = chosen
+            personaManager.setPersona(chosen)
+            prefs.edit().putString("persona_id", chosen).apply()
+            Toast.makeText(activity, "Persona: ${personaLabel(chosen)}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showUserNameDialog() {
+        activity.runOnUiThread {
+            val (card, content) = buildCartoonCardContainer("Nama Panggilan")
+            val input = EditText(activity).apply {
+                hint = "Mau dipanggil siapa sama Oren?"
+                setText(userName)
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+                setTextColor(Color.parseColor("#52290F"))
+                setHintTextColor(Color.parseColor("#9E7E5F"))
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(16).toFloat()
+                    setColor(Color.parseColor("#FFF5E4"))
+                    setStroke(dp(1), Color.parseColor("#D8C3A5"))
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = dp(14)
+                }
+            }
+            content.addView(input)
+
+            var dialogRef: AlertDialog? = null
+            val btnRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            val cancelBtn = createCartoonButton("Batal", false) {
+                dialogRef?.dismiss()
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    marginEnd = dp(8)
+                }
+            }
+            val saveBtn = createCartoonButton("Simpan", true) {
+                val name = input.text.toString().trim()
+                userName = name
+                prefs.edit().putString("user_name", name).apply()
+                synchronized(memoryLock) {
+                    conversationMemory.setKeyFact("nama", name)
+                }
+                persistMemory()
+                val message = if (name.isBlank()) {
+                    "Nama panggilan dihapus."
+                } else {
+                    "Oke, mulai sekarang gue panggil $name!"
+                }
+                Toast.makeText(activity, message, Toast.LENGTH_SHORT).show()
+                dialogRef?.dismiss()
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    marginStart = dp(8)
+                }
+            }
+            btnRow.addView(cancelBtn)
+            btnRow.addView(saveBtn)
+            content.addView(btnRow)
+            dialogRef = showCustomDialog(card)
+        }
+    }
+
+    private fun showVoicePickerDialog() {
 val voices = arrayOf("Puck", "Fenrir", "Charon", "Aoede", "Kore")
 val checked = voices.indexOf(selectedVoiceName).coerceAtLeast(0)
 showCartoonOptionListDialog("Pilih Suara Gemini", voices, checked) { idx ->

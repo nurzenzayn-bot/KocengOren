@@ -56,10 +56,12 @@ android/
 
 assets/
   models/cartoon_cat.glb        (avatar 3D)
-  personas/*.json               (6 persona bawaan)
 
 .github/workflows/build.yml    (Build APK di GitHub Actions)
 ```
+
+Persona bawaan (Default, Casual, Sarkas, Formal, Ramah, Gen-Z) didefinisikan di
+`core/ai/PersonaManager.kt` dan bisa ditambah dari JSON lewat `loadPersonaFromJson`.
 
 ## 🎭 Personas
 
@@ -74,6 +76,7 @@ assets/
 
 - [x] Core AI abstraction (Persona, Memory, Prompt, Gemini, Homework)
 - [x] Android integration (STT/TTS/Gemini/homework/HUD native)
+- [x] Memory & personalisasi (memori persisten, fakta user, ringkasan, pilih persona, nama panggilan)
 - [ ] Custom voice cloning
 - [ ] Proactive notifications
 - [ ] Play Store beta

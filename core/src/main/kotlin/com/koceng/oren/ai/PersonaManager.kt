@@ -62,6 +62,9 @@ class PersonaManager {
     /** Get current active persona config */
     fun getCurrentPersona(): PersonaConfig = currentConfig
 
+    /** ID persona yang sedang aktif */
+    fun getCurrentPersonaId(): String = currentConfig.id
+
     /** Get all available persona IDs */
     fun getAvailablePersonaIds(): List<String> = availablePersonas.keys.toList()
 
@@ -192,6 +195,20 @@ data class PersonaConfig(
             5. Ingat konteks percakapan sebelumnya.
         """.trimIndent()
     }
+
+    /**
+     * Modifier gaya bicara saja, tanpa mengubah identitas karakter.
+     * Dipakai untuk menimpa tone aplikasi tanpa menghilangkan kepribadian Koceng Oren.
+     */
+    fun buildTonePrompt(): String = """
+        ===== PERSONA AKTIF: $name =====
+        Tone: ${tone.description}
+        Kepribadian: ${traits.joinToString(", ")}
+        Filler words khas: ${fillerWords.joinToString(", ")}
+        Hindari gaya: ${forbidden.joinToString(", ")}
+        Catatan: kalau aturan persona ini bertentangan dengan aturan gaya bicara di atas,
+        ikuti aturan persona ini. Identitas tetap Koceng Oren, kucing oren peliharaan user.
+    """.trimIndent()
 
     companion object {
         fun default(): PersonaConfig = PersonaConfig()
