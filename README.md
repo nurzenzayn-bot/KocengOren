@@ -39,7 +39,7 @@ export GEMINI_API_KEY="your_gemini_key_here"
 core/
   ai/          - AiChatBridge, ChatMode, RoomTheme, PersonaManager, ConversationMemory,
                 PromptBuilder, GeminiClient, HomeworkPipeline
-  audio/       - VoiceMimicBridge, AndroidVoiceMimicBridge (VAD), ProceduralSfx, WavUtils
+  audio/       - VoiceMimicBridge, AndroidVoiceMimicBridge (VAD), VoiceProfileAnalyzer, VoiceCloningManager, ProceduralSfx, WavUtils
   character/   - PetCharacter (3D animation / ekspresi)
   data/        - PetStateManager
   input/       - PetTouchController (raycast)
@@ -53,6 +53,7 @@ android/
     - ai/AndroidAiChatBridge.kt  (STT + Gemini + TTS + homework + HUD native)
     - ai/NativePetHudOverlay.kt (HUD bubble/komik di Android)
     - audio/AndroidVoiceMimicBridge.kt (VAD AudioRecord)
+    - audio/VoiceCloningManager.kt (rekam + simpan profil suara)
     - notifications/            (sapaan proaktif: alarm, receiver, notifikasi)
 
 assets/
@@ -79,7 +80,7 @@ Persona bawaan (Default, Casual, Sarkas, Formal, Ramah, Gen-Z) didefinisikan di
 - [x] Android integration (STT/TTS/Gemini/homework/HUD native)
 - [x] Memory & personalisasi (memori persisten, fakta user, ringkasan, pilih persona, nama panggilan)
 - [x] Proactive notifications (sapaan pagi/malam, kangen, follow-up PR)
-- [ ] Custom voice cloning
+- [x] Custom voice cloning (profil nada/tempo dari sampel suara → TTS + preset Gemini)
 - [ ] Play Store beta
 
 ---

@@ -36,6 +36,9 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import com.badlogic.gdx.Gdx
 import com.koceng.oren.BuildConfig
+import com.koceng.oren.audio.VoiceCloningManager
+import com.koceng.oren.audio.VoiceMimicBridge
+import com.koceng.oren.audio.VoiceProfile
 import com.koceng.oren.notifications.ProactiveNotificationScheduler
 import org.json.JSONArray
 import org.json.JSONObject
@@ -79,6 +82,7 @@ private const val PREFS_NAME = "koceng_oren_prefs"
     override fun updateNativeBubble(userText: String?, replyText: String) { nativeHud?.updateBubble(userText, replyText) }
     private val prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     @Volatile private var selectedVoiceName: String = prefs.getString("voice_name", GEMINI_VOICE_NAME) ?: GEMINI_VOICE_NAME
+    private var voiceCloningManager: VoiceCloningManager? = null
     @Volatile private var attitudeLevel: Int = prefs.getInt("attitude_level", 1)
     @Volatile private var lastReplyText: String = ""
 
@@ -141,9 +145,43 @@ private const val PREFS_NAME = "koceng_oren_prefs"
                         }
                     })
                     isFallbackTtsReady = true
+                    voiceCloningManager?.loadProfile()?.let { applyVoiceProfile(it) }
                 }
             }
         }
+    }
+
+    /** Dipanggil AndroidLauncher supaya kloning suara memakai bridge VAD yang sama. */
+    fun attachVoiceMimicBridge(bridge: VoiceMimicBridge) {
+        voiceCloningManager = VoiceCloningManager(
+            activity,
+            prefs,
+            bridge,
+            object : VoiceCloningManager.Listener {
+                override fun onStatus(message: String) {
+                    activity.runOnUiThread {
+                        Toast.makeText(activity, message, Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onProfileChanged(profile: VoiceProfile?) {
+                    activity.runOnUiThread { applyVoiceProfile(profile) }
+                }
+            }
+        )
+        voiceCloningManager?.loadProfile()?.let { applyVoiceProfile(it) }
+    }
+
+    private fun applyVoiceProfile(profile: VoiceProfile?) {
+        if (profile == null) {
+            fallbackTts?.setPitch(1.0f)
+            fallbackTts?.setSpeechRate(1.05f)
+            return
+        }
+        selectedVoiceName = profile.recommendedGeminiVoice()
+        prefs.edit().putString("voice_name", selectedVoiceName).apply()
+        fallbackTts?.setPitch(profile.ttsPitch)
+        fallbackTts?.setSpeechRate(profile.ttsSpeed)
     }
 
     override fun setChatMode(mode: ChatMode) {
@@ -1151,7 +1189,8 @@ dialogRef = showCustomDialog(card)
                 "Atur Level Ketus",
                 "Ganti Tema Ruangan",
                 "Notifikasi Proaktif",
-                "Tes Notifikasi Proaktif"
+                "Tes Notifikasi Proaktif",
+                "Kloning Suara"
             )
             showCartoonOptionListDialog("Pengaturan Koceng Oren", items) { which ->
                 when (which) {
@@ -1162,6 +1201,7 @@ dialogRef = showCustomDialog(card)
                     4 -> showRoomThemePickerDialog()
                     5 -> showProactiveToggleDialog()
                     6 -> sendTestProactiveNotification()
+                    7 -> showVoiceCloningDialog()
                 }
             }
         }
@@ -1288,6 +1328,31 @@ if (!played) speakWithFallbackTts(sample)
 }.start()
 }
 }
+
+    private fun showVoiceCloningDialog() {
+        val manager = voiceCloningManager
+        if (manager == null) {
+            Toast.makeText(activity, "Fitur kloning suara belum siap.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val items = arrayOf("Rekam sampel suara", "Lihat profil saat ini", "Hapus profil")
+        showCartoonOptionListDialog("Kloning Suara", items) { idx ->
+            when (idx) {
+                0 -> manager.recordSample()
+                1 -> {
+                    val profile = manager.loadProfile()
+                    val text = if (profile == null) {
+                        "Belum ada profil suara. Pilih 'Rekam sampel suara' dulu ya."
+                    } else {
+                        "${profile.summary()}.\nSuara Gemini terdekat: ${profile.recommendedGeminiVoice()}"
+                    }
+                    showCartoonOptionListDialog("Profil Suara Kamu", arrayOf("Oke")) { }
+                    Toast.makeText(activity, text, Toast.LENGTH_LONG).show()
+                }
+                2 -> manager.clearProfile()
+            }
+        }
+    }
 
 private fun showAttitudePickerDialog() {
 val levels = arrayOf("Agak Cuek", "Ketus Standar", "Super Bar-Bar")

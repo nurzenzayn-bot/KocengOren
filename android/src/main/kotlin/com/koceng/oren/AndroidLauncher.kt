@@ -40,6 +40,7 @@ class AndroidLauncher : AndroidApplication() {
 
         voiceBridge = AndroidVoiceMimicBridge(this)
         aiChatBridge = AndroidAiChatBridge(this)
+        aiChatBridge.attachVoiceMimicBridge(voiceBridge)
 
         val gdxView = initializeForView(KocengOrenGame(voiceBridge, aiChatBridge), config)
         val rootLayout = FrameLayout(this).apply {
