@@ -48,3 +48,22 @@ jobs:
           name: koceng-oren-debug-apk
           path: android/build/outputs/apk/debug/*.apk
           retention-days: 7
+
+      - name: Build Release APK & AAB (Play Store beta)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: ./gradlew :android:assembleRelease :android:bundleRelease --stacktrace
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: koceng-oren-release-apk
+          path: android/build/outputs/apk/release/*.apk
+          retention-days: 14
+
+      - name: Upload Release AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: koceng-oren-release-aab
+          path: android/build/outputs/bundle/release/*.aab
+          retention-days: 14

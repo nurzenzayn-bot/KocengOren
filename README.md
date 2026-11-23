@@ -81,7 +81,16 @@ Persona bawaan (Default, Casual, Sarkas, Formal, Ramah, Gen-Z) didefinisikan di
 - [x] Memory & personalisasi (memori persisten, fakta user, ringkasan, pilih persona, nama panggilan)
 - [x] Proactive notifications (sapaan pagi/malam, kangen, follow-up PR)
 - [x] Custom voice cloning (profil nada/tempo dari sampel suara → TTS + preset Gemini)
-- [ ] Play Store beta
+- [x] Play Store beta (release signed APK/AAB di CI, ikon adaptif, privacy policy, materi listing)
+
+## 📄 Dokumen rilis
+
+- [PRIVACY.md](PRIVACY.md) — kebijakan privasi (URL untuk Play Console)
+- [PLAYSTORE.md](PLAYSTORE.md) — checklist beta, materi listing, data safety form
+
+> ⚠️ `android/release.keystore` di repo ini adalah **demo key** untuk CI.
+> Sebelum rilis publik, ganti dengan keystore milik sendiri yang disimpan rahasia
+> (lihat PLAYSTORE.md), atau aktifkan Play App Signing.
 
 ---
 
