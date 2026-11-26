@@ -254,7 +254,7 @@ class PetScreen(
             thinkingParticleTimer = 0f
             if (isThinking) {
                 petHud.setStatusState(HudAiState.THINKING)
-                pet.playListening()
+                pet.playThinking()
             }
         }
 
@@ -290,7 +290,8 @@ class PetScreen(
         val shouldZoom = pet.currentState == PetState.TALKING ||
                        pet.currentState == PetState.DIZZY ||
                        pet.currentState == PetState.LAUGHING ||
-                       pet.currentState == PetState.LISTENING
+                       pet.currentState == PetState.LISTENING ||
+                       pet.currentState == PetState.THINKING
         targetCameraPos.set(if (shouldZoom) zoomCameraPos else defaultCameraPos)
         camera.position.lerp(targetCameraPos, delta * 3.0f)
         camera.lookAt(0f, cameraLookAtY, 0f)

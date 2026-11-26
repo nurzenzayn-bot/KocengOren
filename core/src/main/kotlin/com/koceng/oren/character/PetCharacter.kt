@@ -9,10 +9,9 @@ import com.badlogic.gdx.math.Vector3
 import com.badlogic.gdx.math.collision.BoundingBox
 import com.badlogic.gdx.utils.Disposable
 import net.mgsx.gltf.loaders.glb.GLBLoader
-import net.mgsx.gltf.scene3d.model.NodePartPlus
-import net.mgsx.gltf.scene3d.model.NodePlus
 import net.mgsx.gltf.scene3d.scene.Scene
 import net.mgsx.gltf.scene3d.scene.SceneAsset
+import java.util.IdentityHashMap
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -20,6 +19,7 @@ import kotlin.math.sin
 enum class PetState {
     IDLE,
     LISTENING,
+    THINKING, // Mikir: kepala miring, alis naik, mata melirik
     TALKING,
     DIZZY,    // Reaksi kepala dipukul/disentuh (Pusing)
     LAUGHING, // Reaksi perut dielus/disentuh (Tertawa)
@@ -32,6 +32,13 @@ enum class HitZone {
     BELLY,
     NONE
 }
+
+/** Pose penting sebuah node sebelum modifikasi prosedural diterapkan. */
+private data class StoredPose(
+    val rotation: Quaternion = Quaternion(),
+    val scale: Vector3 = Vector3(),
+    val translation: Vector3 = Vector3()
+)
 
 class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable {
 
@@ -50,7 +57,8 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
     val worldHeadBox = BoundingBox()
     val worldBellyBox = BoundingBox()
 
-    // Peta nama animasi yang cocok dengan aset model
+    // Peta nama animasi yang tersedia di aset GLB.
+    // Aset ini semua klipnya bertema senjata, jadi pilih yang gerakannya netral.
     private val animIdleName: String
     private val animListeningName: String
     private val animTalkingName: String
@@ -64,12 +72,27 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
     private var dizzyTimer: Float = 0f
     private var laughTimer: Float = 0f
     private var eatTimer: Float = 0f
-private val headNodes = mutableListOf<Node>()
     private var talkBlend: Float = 0f
+
+    private val headNodes = mutableListOf<Node>()
     private val jawNodes = mutableListOf<Node>()
-private val leftArmNodes = mutableListOf<Node>()
-private val rightArmNodes = mutableListOf<Node>()
-private val talkQuat = Quaternion()
+    private val leftArmNodes = mutableListOf<Node>()
+    private val rightArmNodes = mutableListOf<Node>()
+    private val browNodes = mutableListOf<Node>()
+    private val lidUpNodes = mutableListOf<Node>()
+    private val lidDownNodes = mutableListOf<Node>()
+    private val focusNodes = mutableListOf<Node>()
+    private val earNodes = mutableListOf<Node>()
+    private val weaponNodes = mutableListOf<Node>()
+
+    /** Semua node yang pose-nya mungkin kita ubah tiap frame. */
+    private val poseNodes = mutableListOf<Node>()
+    private val poseBase = IdentityHashMap<Node, StoredPose>()
+    private val workQuat = Quaternion()
+
+    // Kedip: jeda acak, lalu kelopak mengecil ~0,12 detik.
+    private var blinkTimer = 2.5f
+    private var blinkRemaining = 0f
 
     // Listener untuk transisi kembali ke IDLE saat animasi GLB one-shot selesai
     private val reactionListener = object : AnimationController.AnimationListener {
@@ -112,56 +135,118 @@ private val talkQuat = Quaternion()
         val animMap = scene.modelInstance.animations.map { it.id }.toSet()
         Gdx.app.log("PetCharacter", "Daftar animasi di GLB: $animMap")
 
-        // Memetakan animasi ke aset model
-        animIdleName = findAnimation(animMap, listOf("Idle", "Idle_Harmonic", "Idle_Dreamer", "Arm_Idle"))
-        animListeningName = findAnimation(animMap, listOf("Listening", "Idle_Dreamer", "Pistol_Idle", "Idle_Harmonic"))
-        animTalkingName = findAnimation(animMap, listOf("Talking", "Arm_Attack_Light", "Arm_Attack_Medium", "Idle_Invasive"))
-        animDizzyName = findAnimation(animMap, listOf("Dizzy", "Hit", "Pusing", "Arm_Hit", "Pistol_Hit", "Sword_Hit"))
-        animLaughName = findAnimation(animMap, listOf("Laugh", "Laughing", "Tertawa", "Arm_Attack_Hight", "Sword_Attack_Light"))
-        animEatingName = findAnimation(animMap, listOf("Eating", "Eat", "Arm_Attack_Light", "Arm_Attack_End", "Arm_Attack_Medium"))
-        animSleepingName = findAnimation(animMap, listOf("Sleeping", "Sleep", "Idle_Dreamer", "Arm_Death", "Idle_Invasive"))
+        // Tidak ada klip "Talking/Dizzy/Laugh" sungguhan di aset; pilih yang paling netral
+        // dan serahkan sisanya ke animasi prosedural. Jangan pakai fallback clip pertama
+        // (bisa Sword_Attack / Pistol_Death).
+        animIdleName = findAnimation(animMap, listOf("Idle_Harmonic"), listOf("harmonic"))
+        animListeningName = findAnimation(animMap, listOf("Idle_Invasive", "Arm_Idle"), listOf("invasive"))
+        animTalkingName = findAnimation(animMap, listOf("Idle_Harmonic"), listOf("harmonic"))
+        animDizzyName = findAnimation(animMap, listOf("Arm_Hit"), listOf("hit"))
+        animLaughName = findAnimation(animMap, listOf(), listOf("omical")) // "Idle_?omical"
+        animEatingName = findAnimation(animMap, listOf("Idle_Harmonic"), listOf("harmonic"))
+        animSleepingName = findAnimation(animMap, listOf("Idle_Dreamer"), listOf("dreamer"))
+
+        collectNodes(scene.modelInstance.nodes)
+        hideWeapons()
 
         // Mainkan animasi awal (Idle)
         playIdle()
-        collectUpperBodyNodes(scene.modelInstance.nodes)
     }
 
-    private fun collectUpperBodyNodes(nodes: Iterable<Node>) {
+    /**
+     * Mengumpulkan node berdasarkan nama (termasuk ejaan salah dari aset:
+     * Neack, Sholdier) dan menyimpan semua node untuk reset pose harian.
+     */
+    private fun collectNodes(nodes: Iterable<Node>) {
         for (node in nodes) {
             val id = node.id.lowercase()
-            val isLowerBody = id.contains("leg") || id.contains("thigh") || id.contains("calf") ||
-                id.contains("foot") || id.contains("toe") || id.contains("hip") || id.contains("pelvis")
-            if (!isLowerBody) {
-                when {
-                    id.contains("jaw") || id.contains("mouth")  || id.contains("chin") || id.contains("lip") || id.contains("muzzle") || id.contains("snout")-> jawNodes.add(node)
-                    id.contains("head") || id.contains("neck") -> headNodes.add(node)
-                    id.contains("arm") || id.contains("shoulder") || id.contains("forearm") ||
-                        id.contains("hand") || id.contains("clavicle") -> {
-                        if (id.contains("left") || id.contains("_l") || id.contains(".l")) {
-                            leftArmNodes.add(node)
-                        } else if (id.contains("right") || id.contains("_r") || id.contains(".r")) {
-                            rightArmNodes.add(node)
-                        }
+            poseNodes.add(node)
+
+            when {
+                id.contains("weapon") || id.contains("sword") || id.contains("lapagun") ->
+                    weaponNodes.add(node)
+
+                id.contains("jaw") || id.contains("mouth") || id.contains("chin") ||
+                        id.contains("lip") || id.contains("muzzle") || id.contains("snout") ->
+                    jawNodes.add(node)
+
+                id.contains("head") || id.contains("neck") || id.contains("neack") ->
+                    headNodes.add(node)
+
+                id.contains("arm") || id.contains("shoulder") || id.contains("sholdier") ||
+                        id.contains("forearm") || id.contains("hand") || id.contains("clavicle") -> {
+                    if (id.contains("left") || id.contains("_l") || id.contains(".l")) {
+                        leftArmNodes.add(node)
+                    } else if (id.contains("right") || id.contains("_r") || id.contains(".r")) {
+                        rightArmNodes.add(node)
                     }
                 }
+
+                id.startsWith("brov") -> browNodes.add(node)
+                id.contains("veko_up") -> lidUpNodes.add(node)
+                id.contains("veko_dwn") -> lidDownNodes.add(node)
+                id.contains("eyes_fokus") -> focusNodes.add(node)
+                id.startsWith("aye_") -> earNodes.add(node)
             }
+
             if (node.hasChildren()) {
-                collectUpperBodyNodes(node.children)
+                collectNodes(node.children)
             }
         }
     }
 
-    private fun findAnimation(available: Set<String>, candidates: List<String>): String {
-        for (candidate in candidates) {
-            if (available.contains(candidate)) return candidate
+    private fun findAnimation(
+        available: Set<String>,
+        exact: List<String>,
+        contains: List<String> = emptyList()
+    ): String {
+        for (name in exact) {
+            if (available.contains(name)) return name
         }
-        return available.firstOrNull() ?: ""
+        for (needle in contains) {
+            for (name in available) {
+                if (name.lowercase().contains(needle)) return name
+            }
+        }
+        return ""
+    }
+
+    /** Kucing ini bukan kucing samurai: sembunyikan pedang & pistol dari aset. */
+    private fun hideWeapons() {
+        for (node in weaponNodes) {
+            node.scale.set(0f, 0f, 0f)
+        }
     }
 
     fun updateWorldBounds() {
         val transform = scene.modelInstance.transform
         worldHeadBox.set(localHeadBox).mul(transform)
         worldBellyBox.set(localBellyBox).mul(transform)
+    }
+
+    /** Kembalikan semua node ke pose hasil animasi frame sebelumnya sebelum clip baru di-sample. */
+    private fun restorePoses() {
+        for (node in poseNodes) {
+            val base = poseBase[node] ?: continue
+            node.rotation.set(base.rotation)
+            node.scale.set(base.scale)
+            node.translation.set(base.translation)
+        }
+    }
+
+    /** Simpan pose setelah clip GLB di-sample, sebagai titik awal modifikasi kita. */
+    private fun capturePoses() {
+        for (node in poseNodes) {
+            val pose = poseBase.getOrPut(node) { StoredPose() }
+            pose.rotation.set(node.rotation)
+            pose.scale.set(node.scale)
+            pose.translation.set(node.translation)
+        }
+    }
+
+    private fun rotateFromBase(node: Node, rotation: Quaternion) {
+        val base = poseBase[node]?.rotation ?: return
+        node.rotation.set(base).mul(rotation)
     }
 
     fun update(delta: Float) {
@@ -181,59 +266,139 @@ private val talkQuat = Quaternion()
             if (eatTimer <= 0f && currentState == PetState.EATING) playIdle()
         }
 
-        // 1. Update controller animasi bawaan GLB (jika ada)
+        // 1. Reset pose, lalu update controller animasi bawaan GLB
+        restorePoses()
         scene.animationController.update(delta)
+        capturePoses()
 
-        // 2. Animasi Transformasi Prosedural (Skala, Rotasi, Posisi)
-        applyProceduralAnimation()
-        talkBlend = MathUtils.lerp(talkBlend, if (currentState == PetState.TALKING) 1f else 0f, delta * 7.5f)
-        
+        // 2. Modifikasi ekspresi & gestur di atas pose hasil clip
+        applyExpressions(delta)
+
+        talkBlend = MathUtils.lerp(
+            talkBlend,
+            if (currentState == PetState.TALKING) 1f else 0f,
+            delta * 7.5f
+        )
         if (talkBlend > 0.01f) {
             applyTalkingUpperBodyGestures()
         }
-        // 3. Update Bounding Box di World Coordinates
+
+        // 3. Animasi transformasi tubuh (napas, goyangan, lompatan, dll.)
+        applyProceduralAnimation()
+
+        // 4. Sembunyikan senjata lagi (clip tertentu mengubah scale node ini)
+        hideWeapons()
+
+        // 5. Update Bounding Box di World Coordinates
         updateWorldBounds()
     }
 
+    private fun applyExpressions(delta: Float) {
+        // --- Kedip ---
+        blinkTimer -= delta
+        var lidScale = 1f
+        if (blinkRemaining > 0f) {
+            blinkRemaining -= delta
+            lidScale = 0.22f
+        } else if (blinkTimer <= 0f) {
+            blinkRemaining = 0.11f
+            blinkTimer = 2.6f + MathUtils.random(0f, 1.8f)
+            lidScale = 0.22f
+        } else {
+            lidScale = when (currentState) {
+                PetState.LAUGHING -> 0.55f
+                PetState.DIZZY -> 0.70f
+                PetState.SLEEPING -> 0.12f
+                else -> 1f
+            }
+        }
+        for (node in lidUpNodes + lidDownNodes) {
+            val base = poseBase[node]?.scale ?: continue
+            node.scale.set(base.x, base.y * lidScale, base.z)
+        }
+
+        // --- Alis: naik saat menyimak/mikir, turun saat pusing ---
+        val browLift = when (currentState) {
+            PetState.LISTENING, PetState.THINKING -> 0.018f
+            PetState.TALKING -> 0.008f
+            PetState.LAUGHING -> 0.012f
+            PetState.DIZZY -> -0.014f
+            else -> 0f
+        }
+        for ((index, node) in browNodes.withIndex()) {
+            val base = poseBase[node]?.translation ?: continue
+            // Saat mikir, satu alis lebih tinggi biar kesan "berpikir" terlihat.
+            val lift = if (currentState == PetState.THINKING && index % 2 == 0) {
+                browLift * 1.7f
+            } else {
+                browLift
+            }
+            node.translation.set(base.x, base.y + lift, base.z)
+        }
+
+        // --- Telinga tegak saat fokus ---
+        val earTilt = if (currentState == PetState.LISTENING || currentState == PetState.THINKING) {
+            -7f
+        } else {
+            0f
+        }
+        workQuat.setEulerAngles(0f, 0f, earTilt)
+        for (node in earNodes) {
+            rotateFromBase(node, workQuat)
+        }
+
+        // --- Mata melirik saat mikir ---
+        val focusX = if (currentState == PetState.THINKING) {
+            MathUtils.sin(stateTime * 2.2f) * 0.025f
+        } else {
+            0f
+        }
+        for (node in focusNodes) {
+            val base = poseBase[node]?.translation ?: continue
+            node.translation.set(base.x + focusX, base.y, base.z)
+        }
+    }
+
     private fun applyTalkingUpperBodyGestures() {
-        val speechPulse = (abs(sin(stateTime * 9.5f)) * 0.65f + abs(sin(stateTime * 15.2f)) * 0.35f) * talkBlend
+        val speechPulse =
+            (abs(sin(stateTime * 9.5f)) * 0.65f + abs(sin(stateTime * 15.2f)) * 0.35f) * talkBlend
+
+        // Kepala: gerakan kecil mengikuti irama bicara (dari pose dasar, tidak menumpuk)
         val headPitch = (sin(stateTime * 5.2f) * 2.2f + speechPulse * 2.0f) * talkBlend
         val headYaw = sin(stateTime * 2.3f) * 3.8f * talkBlend
         val headRoll = cos(stateTime * 1.9f) * 2.2f * talkBlend
-        talkQuat.setEulerAngles(headYaw, headPitch, headRoll)
+        workQuat.setEulerAngles(headYaw, headPitch, headRoll)
         for (node in headNodes) {
-            node.rotation.mul(talkQuat)
+            rotateFromBase(node, workQuat)
         }
 
+        // Rahang membuka-menutut mengikuti pulse suara
         val jawOpen = speechPulse * 22f
-        talkQuat.setEulerAngles(0f, jawOpen, 0f)
+        workQuat.setEulerAngles(0f, jawOpen, 0f)
         for (node in jawNodes) {
-            node.rotation.mul(talkQuat)
+            rotateFromBase(node, workQuat)
         }
-        applyMorphSpeech(scene.modelInstance.nodes, speechPulse)
-        
+
         val leftArmPitch = sin(stateTime * 3.1f) * 8.5f * talkBlend
         val leftArmRoll = cos(stateTime * 2.2f) * 5.0f * talkBlend
-        talkQuat.setEulerAngles(0f, leftArmPitch, leftArmRoll)
+        workQuat.setEulerAngles(0f, leftArmPitch, leftArmRoll)
         for (node in leftArmNodes) {
-            node.rotation.mul(talkQuat)
+            rotateFromBase(node, workQuat)
         }
 
         val rightArmPitch = -sin(stateTime * 3.1f) * 8.5f * talkBlend
         val rightArmRoll = -cos(stateTime * 2.2f) * 5.0f * talkBlend
-        talkQuat.setEulerAngles(0f, rightArmPitch, rightArmRoll)
+        workQuat.setEulerAngles(0f, rightArmPitch, rightArmRoll)
         for (node in rightArmNodes) {
-            node.rotation.mul(talkQuat)
+            rotateFromBase(node, workQuat)
         }
 
         scene.modelInstance.calculateTransforms()
     }
-    private fun applyMorphSpeech(nodes: Iterable<Node>, speechPulse: Float) {
-        val mouthValue = speechPulse * 0.85f; for (node in nodes) { if (node is NodePlus) { val w = node.weights; if (w != null && w.values.isNotEmpty()) { val names = node.morphTargetNames; var matched = false; if (names != null) { for (i in 0 until minOf(names.size, w.values.size)) { val n = names[i]?.lowercase() ?: ""; if (n.contains("mouth") || n.contains("jaw") || n.contains("open") || n.contains("talk") || n.contains("speak") || n.contains("lip")) { w.values[i] = mouthValue; matched = true } } }; if (!matched) w.values[0] = mouthValue } }; for (part in node.parts) { if (part is NodePartPlus) { val mt = part.morphTargets; if (mt != null && mt.values.isNotEmpty()) mt.values[0] = mouthValue } }; if (node.hasChildren()) applyMorphSpeech(node.children, speechPulse) } }
-    
+
     /**
-     * Menghitung transformasi sinusoidal halus (napas, anggukan, goyangan pusing, lompatan ceria)
-     * yang berjalan baik melengkapi klip animasi GLB maupun sebagai fallback murni.
+     * Menghitung transformasi sinusoidal halus (napas, anggukan, goyangan pusing,
+     * lompatan ceria, miring mikir) yang melengkapi klip GLB maupun jadi fallback.
      */
     private fun applyProceduralAnimation() {
         var posY = 0f
@@ -245,19 +410,26 @@ private val talkQuat = Quaternion()
 
         when (currentState) {
             PetState.IDLE -> {
-                // Bernapas halus (perubahan skala Y sinusoidal lembut)
                 val breath = sin(stateTime * 3.2f)
                 scaleY = 1.0f + 0.024f * breath
                 scaleX = 1.0f - 0.012f * breath
                 scaleZ = 1.0f - 0.012f * breath
             }
+
             PetState.LISTENING -> {
-                // Posisi sedikit condong ke depan dan telinga menyimak
                 rotX = 3.5f
                 val tilt = sin(stateTime * 2.5f) * 2.0f
                 rotZ = tilt
                 scaleY = 1.02f
             }
+
+            PetState.THINKING -> {
+                // Diam, kepala sedikit miring, napas pelan
+                rotX = -1.5f
+                rotZ = sin(stateTime * 1.6f) * 2.2f
+                scaleY = 1.0f + 0.01f * sin(stateTime * 2.4f)
+            }
+
             PetState.TALKING -> {
                 posY = 0f
                 rotX = 0f
@@ -266,8 +438,8 @@ private val talkQuat = Quaternion()
                 scaleY = 1f
                 scaleZ = 1f
             }
+
             PetState.DIZZY -> {
-                // Goyangan rotasi sumbu Z cepat + squash & stretch
                 val wobble = sin(stateTime * 18.0f) * 11.0f
                 rotZ = wobble
                 rotX = cos(stateTime * 14.0f) * 4.0f
@@ -275,22 +447,22 @@ private val talkQuat = Quaternion()
                 scaleX = 1.0f + 0.04f * abs(sin(stateTime * 18.0f))
                 scaleZ = scaleX
             }
+
             PetState.LAUGHING -> {
-                // Lompatan kecil berulang (ceria/senang)
                 val hop = abs(sin(stateTime * 13.0f)) * 0.075f
                 posY = hop
                 rotZ = sin(stateTime * 9.0f) * 6.0f
                 scaleY = 1.0f + 0.05f * sin(stateTime * 13.0f)
             }
+
             PetState.EATING -> {
-                // Gerakan makan mengunyah
                 val chew = abs(sin(stateTime * 10.0f)) * 0.035f
                 posY = chew
                 rotX = sin(stateTime * 10.0f) * 5.5f
                 scaleY = 1.0f + 0.03f * sin(stateTime * 10.0f)
             }
+
             PetState.SLEEPING -> {
-                // Posisi turun sedikit, rebah rileks dengan ritme napas lambat
                 posY = -0.04f
                 val sleepBreath = sin(stateTime * 1.6f)
                 scaleY = 0.95f + 0.022f * sleepBreath
@@ -316,18 +488,28 @@ private val talkQuat = Quaternion()
     }
 
     fun playListening() {
-        if (currentState == PetState.DIZZY || currentState == PetState.LAUGHING || currentState == PetState.SLEEPING) return
+        if (currentState == PetState.DIZZY || currentState == PetState.LAUGHING ||
+            currentState == PetState.SLEEPING
+        ) return
         currentState = PetState.LISTENING
         if (animListeningName.isNotEmpty()) {
             scene.animationController.animate(animListeningName, -1, 1f, null, 0.2f)
         }
     }
 
+    fun playThinking() {
+        if (currentState == PetState.SLEEPING) wakeUp()
+        currentState = PetState.THINKING
+        if (animListeningName.isNotEmpty()) {
+            scene.animationController.animate(animListeningName, -1, 0.9f, null, 0.2f)
+        }
+    }
+
     fun playTalking() {
         if (currentState == PetState.SLEEPING) return
         currentState = PetState.TALKING
-        if (animIdleName.isNotEmpty()) {
-            scene.animationController.animate(animIdleName, -1, 1f, null, 0.25f)
+        if (animTalkingName.isNotEmpty()) {
+            scene.animationController.animate(animTalkingName, -1, 1f, null, 0.25f)
         }
     }
 
