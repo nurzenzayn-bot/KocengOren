@@ -2,6 +2,7 @@ package com.koceng.oren.character
 
 import com.badlogic.gdx.Gdx
 import com.badlogic.gdx.graphics.g3d.model.Node
+import com.badlogic.gdx.math.Matrix4
 import com.badlogic.gdx.math.Quaternion
 import com.badlogic.gdx.math.MathUtils
 import com.badlogic.gdx.graphics.g3d.utils.AnimationController
@@ -34,11 +35,7 @@ enum class HitZone {
 }
 
 /** Pose penting sebuah node sebelum modifikasi prosedural diterapkan. */
-private data class StoredPose(
-    val rotation: Quaternion = Quaternion(),
-    val scale: Vector3 = Vector3(),
-    val translation: Vector3 = Vector3()
-)
+private data class StoredPose(val localTransform: Matrix4 = Matrix4())
 
 class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable {
 
@@ -48,17 +45,13 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
     var currentState: PetState = PetState.IDLE
         private set
 
-    // Bounding Box lokal untuk seluruh karakter, kepala, dan perut
     val fullModelBounds = BoundingBox()
     val localHeadBox = BoundingBox()
     val localBellyBox = BoundingBox()
 
-    // Bounding Box di World Coordinates (diupdate setiap frame sesuai transform)
     val worldHeadBox = BoundingBox()
     val worldBellyBox = BoundingBox()
 
-    // Peta nama animasi yang tersedia di aset GLB.
-    // Aset ini semua klipnya bertema senjata, jadi pilih yang gerakannya netral.
     private val animIdleName: String
     private val animListeningName: String
     private val animTalkingName: String
@@ -67,7 +60,6 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
     private val animEatingName: String
     private val animSleepingName: String
 
-    // Parameter animasi prosedural
     private var stateTime: Float = 0f
     private var dizzyTimer: Float = 0f
     private var laughTimer: Float = 0f
@@ -85,16 +77,12 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
     private val earNodes = mutableListOf<Node>()
     private val weaponNodes = mutableListOf<Node>()
 
-    /** Semua node yang pose-nya mungkin kita ubah tiap frame. */
     private val poseNodes = mutableListOf<Node>()
     private val poseBase = IdentityHashMap<Node, StoredPose>()
-    private val workQuat = Quaternion()
 
-    // Kedip: jeda acak, lalu kelopak mengecil ~0,12 detik.
     private var blinkTimer = 2.5f
     private var blinkRemaining = 0f
 
-    // Listener untuk transisi kembali ke IDLE saat animasi GLB one-shot selesai
     private val reactionListener = object : AnimationController.AnimationListener {
         override fun onEnd(animation: AnimationController.AnimationDesc?) {
             if (currentState != PetState.SLEEPING) {
@@ -106,7 +94,6 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
     }
 
     init {
-        // Hitung bounding box dasar model
         scene.modelInstance.transform.idt()
         scene.modelInstance.calculateBoundingBox(fullModelBounds)
         val min = fullModelBounds.min
@@ -117,13 +104,11 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
 
         Gdx.app.log("PetCharacter", "Model Bounds: min=$min, max=$max, height=$height")
 
-        // Inisialisasi Bounding Box Kepala (bagian atas 65% - 100% tinggi model)
         localHeadBox.set(
             Vector3(min.x + width * 0.15f, min.y + height * 0.65f, min.z + depth * 0.15f),
             Vector3(max.x - width * 0.15f, max.y, max.z - depth * 0.15f)
         )
 
-        // Inisialisasi Bounding Box Perut (bagian tengah 30% - 65% tinggi model)
         localBellyBox.set(
             Vector3(min.x + width * 0.2f, min.y + height * 0.30f, min.z + depth * 0.2f),
             Vector3(max.x - width * 0.2f, min.y + height * 0.65f, max.z - depth * 0.2f)
@@ -131,32 +116,22 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
 
         updateWorldBounds()
 
-        // Deteksi animasi yang tersedia di dalam file GLB
         val animMap = scene.modelInstance.animations.map { it.id }.toSet()
         Gdx.app.log("PetCharacter", "Daftar animasi di GLB: $animMap")
 
-        // Tidak ada klip "Talking/Dizzy/Laugh" sungguhan di aset; pilih yang paling netral
-        // dan serahkan sisanya ke animasi prosedural. Jangan pakai fallback clip pertama
-        // (bisa Sword_Attack / Pistol_Death).
         animIdleName = findAnimation(animMap, listOf("Idle_Harmonic"), listOf("harmonic"))
         animListeningName = findAnimation(animMap, listOf("Idle_Invasive", "Arm_Idle"), listOf("invasive"))
         animTalkingName = findAnimation(animMap, listOf("Idle_Harmonic"), listOf("harmonic"))
         animDizzyName = findAnimation(animMap, listOf("Arm_Hit"), listOf("hit"))
-        animLaughName = findAnimation(animMap, listOf(), listOf("omical")) // "Idle_?omical"
+        animLaughName = findAnimation(animMap, listOf(), listOf("omical"))
         animEatingName = findAnimation(animMap, listOf("Idle_Harmonic"), listOf("harmonic"))
         animSleepingName = findAnimation(animMap, listOf("Idle_Dreamer"), listOf("dreamer"))
 
         collectNodes(scene.modelInstance.nodes)
-        hideWeapons()
 
-        // Mainkan animasi awal (Idle)
         playIdle()
     }
 
-    /**
-     * Mengumpulkan node berdasarkan nama (termasuk ejaan salah dari aset:
-     * Neack, Sholdier) dan menyimpan semua node untuk reset pose harian.
-     */
     private fun collectNodes(nodes: Iterable<Node>) {
         for (node in nodes) {
             val id = node.id.lowercase()
@@ -211,48 +186,29 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
         return ""
     }
 
-    /** Kucing ini bukan kucing samurai: sembunyikan pedang & pistol dari aset. */
-    private fun hideWeapons() {
-        for (node in weaponNodes) {
-            node.scale.set(0f, 0f, 0f)
-        }
-    }
-
     fun updateWorldBounds() {
         val transform = scene.modelInstance.transform
         worldHeadBox.set(localHeadBox).mul(transform)
         worldBellyBox.set(localBellyBox).mul(transform)
     }
 
-    /** Kembalikan semua node ke pose hasil animasi frame sebelumnya sebelum clip baru di-sample. */
     private fun restorePoses() {
         for (node in poseNodes) {
             val base = poseBase[node] ?: continue
-            node.rotation.set(base.rotation)
-            node.scale.set(base.scale)
-            node.translation.set(base.translation)
+            node.localTransform.set(base.localTransform)
         }
     }
 
-    /** Simpan pose setelah clip GLB di-sample, sebagai titik awal modifikasi kita. */
     private fun capturePoses() {
         for (node in poseNodes) {
             val pose = poseBase.getOrPut(node) { StoredPose() }
-            pose.rotation.set(node.rotation)
-            pose.scale.set(node.scale)
-            pose.translation.set(node.translation)
+            pose.localTransform.set(node.localTransform)
         }
-    }
-
-    private fun rotateFromBase(node: Node, rotation: Quaternion) {
-        val base = poseBase[node]?.rotation ?: return
-        node.rotation.set(base).mul(rotation)
     }
 
     fun update(delta: Float) {
         stateTime += delta
 
-        // Update timer one-shot reaction
         if (dizzyTimer > 0f) {
             dizzyTimer -= delta
             if (dizzyTimer <= 0f && currentState == PetState.DIZZY) playIdle()
@@ -266,12 +222,10 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
             if (eatTimer <= 0f && currentState == PetState.EATING) playIdle()
         }
 
-        // 1. Reset pose, lalu update controller animasi bawaan GLB
         restorePoses()
         scene.animationController.update(delta)
         capturePoses()
 
-        // 2. Modifikasi ekspresi & gestur di atas pose hasil clip
         applyExpressions(delta)
 
         talkBlend = MathUtils.lerp(
@@ -283,13 +237,13 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
             applyTalkingUpperBodyGestures()
         }
 
-        // 3. Animasi transformasi tubuh (napas, goyangan, lompatan, dll.)
         applyProceduralAnimation()
 
-        // 4. Sembunyikan senjata lagi (clip tertentu mengubah scale node ini)
-        hideWeapons()
+        // Sembunyikan senjata tiap frame (clip tertentu mengubah scale node ini)
+        for (node in weaponNodes) {
+            node.localTransform.idt().scale(0f, 0f, 0f)
+        }
 
-        // 5. Update Bounding Box di World Coordinates
         updateWorldBounds()
     }
 
@@ -313,8 +267,8 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
             }
         }
         for (node in lidUpNodes + lidDownNodes) {
-            val base = poseBase[node]?.scale ?: continue
-            node.scale.set(base.x, base.y * lidScale, base.z)
+            val base = poseBase[node]?.localTransform ?: continue
+            node.localTransform.set(base).scale(1f, lidScale, 1f)
         }
 
         // --- Alis: naik saat menyimak/mikir, turun saat pusing ---
@@ -326,14 +280,13 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
             else -> 0f
         }
         for ((index, node) in browNodes.withIndex()) {
-            val base = poseBase[node]?.translation ?: continue
-            // Saat mikir, satu alis lebih tinggi biar kesan "berpikir" terlihat.
+            val base = poseBase[node]?.localTransform ?: continue
             val lift = if (currentState == PetState.THINKING && index % 2 == 0) {
                 browLift * 1.7f
             } else {
                 browLift
             }
-            node.translation.set(base.x, base.y + lift, base.z)
+            node.localTransform.set(base).translate(0f, lift, 0f)
         }
 
         // --- Telinga tegak saat fokus ---
@@ -342,9 +295,9 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
         } else {
             0f
         }
-        workQuat.setEulerAngles(0f, 0f, earTilt)
         for (node in earNodes) {
-            rotateFromBase(node, workQuat)
+            val base = poseBase[node]?.localTransform ?: continue
+            node.localTransform.set(base).rotate(Vector3.Z, earTilt)
         }
 
         // --- Mata melirik saat mikir ---
@@ -354,8 +307,8 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
             0f
         }
         for (node in focusNodes) {
-            val base = poseBase[node]?.translation ?: continue
-            node.translation.set(base.x + focusX, base.y, base.z)
+            val base = poseBase[node]?.localTransform ?: continue
+            node.localTransform.set(base).translate(focusX, 0f, 0f)
         }
     }
 
@@ -363,43 +316,48 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
         val speechPulse =
             (abs(sin(stateTime * 9.5f)) * 0.65f + abs(sin(stateTime * 15.2f)) * 0.35f) * talkBlend
 
-        // Kepala: gerakan kecil mengikuti irama bicara (dari pose dasar, tidak menumpuk)
         val headPitch = (sin(stateTime * 5.2f) * 2.2f + speechPulse * 2.0f) * talkBlend
         val headYaw = sin(stateTime * 2.3f) * 3.8f * talkBlend
         val headRoll = cos(stateTime * 1.9f) * 2.2f * talkBlend
-        workQuat.setEulerAngles(headYaw, headPitch, headRoll)
         for (node in headNodes) {
-            rotateFromBase(node, workQuat)
+            val base = poseBase[node]?.localTransform ?: continue
+            node.localTransform.set(base)
+                .rotate(Vector3.X, headPitch)
+                .rotate(Vector3.Y, headYaw)
+                .rotate(Vector3.Z, headRoll)
         }
 
-        // Rahang membuka-menutut mengikuti pulse suara
-        val jawOpen = speechPulse * 22f
-        workQuat.setEulerAngles(0f, jawOpen, 0f)
+        // Rahang: buka-tutup mengikuti pulse suara (rotasi sekitar X)
+        val jawOpen = speechPulse * 35f
         for (node in jawNodes) {
-            rotateFromBase(node, workQuat)
+            val base = poseBase[node]?.localTransform ?: continue
+            node.localTransform.set(base)
+                .rotate(Vector3.X, jawOpen)
+                // Dorong sedikit ke depan supaya gerakan terbaca jelas
+                .translate(0f, 0f, 0.03f * speechPulse)
         }
 
         val leftArmPitch = sin(stateTime * 3.1f) * 8.5f * talkBlend
         val leftArmRoll = cos(stateTime * 2.2f) * 5.0f * talkBlend
-        workQuat.setEulerAngles(0f, leftArmPitch, leftArmRoll)
         for (node in leftArmNodes) {
-            rotateFromBase(node, workQuat)
+            val base = poseBase[node]?.localTransform ?: continue
+            node.localTransform.set(base)
+                .rotate(Vector3.Y, leftArmPitch)
+                .rotate(Vector3.Z, leftArmRoll)
         }
 
         val rightArmPitch = -sin(stateTime * 3.1f) * 8.5f * talkBlend
         val rightArmRoll = -cos(stateTime * 2.2f) * 5.0f * talkBlend
-        workQuat.setEulerAngles(0f, rightArmPitch, rightArmRoll)
         for (node in rightArmNodes) {
-            rotateFromBase(node, workQuat)
+            val base = poseBase[node]?.localTransform ?: continue
+            node.localTransform.set(base)
+                .rotate(Vector3.Y, rightArmPitch)
+                .rotate(Vector3.Z, rightArmRoll)
         }
 
         scene.modelInstance.calculateTransforms()
     }
 
-    /**
-     * Menghitung transformasi sinusoidal halus (napas, anggukan, goyangan pusing,
-     * lompatan ceria, miring mikir) yang melengkapi klip GLB maupun jadi fallback.
-     */
     private fun applyProceduralAnimation() {
         var posY = 0f
         var rotX = 0f
@@ -424,7 +382,6 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
             }
 
             PetState.THINKING -> {
-                // Diam, kepala sedikit miring, napas pelan
                 rotX = -1.5f
                 rotZ = sin(stateTime * 1.6f) * 2.2f
                 scaleY = 1.0f + 0.01f * sin(stateTime * 2.4f)
