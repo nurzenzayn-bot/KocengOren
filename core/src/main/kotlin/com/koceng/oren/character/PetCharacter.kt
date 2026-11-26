@@ -244,6 +244,10 @@ class PetCharacter(glbFilePath: String = "models/cartoon_cat.glb") : Disposable 
             node.localTransform.idt().scale(0f, 0f, 0f)
         }
 
+        // Pastikan semua modifikasi localTransform (mulut, alis, kedip, dll.)
+        // benar-benar dipakai renderer setelah root transform berubah.
+        scene.modelInstance.calculateTransforms()
+
         updateWorldBounds()
     }
 
